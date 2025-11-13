@@ -80,7 +80,7 @@ bool showAdjustmentVisual = false;     // Hiển thị visual
 
 // Biến indicator cho edit mode
 unsigned long lastEditActivity = 0;    // Thời gian hoạt động edit cuối
-bool showEditIndicator = false;        // Hiển thị indicator
+bool showEditVisual = false;           // Hiển thị visual edit (10s timeout)
 
 // Biến theo dõi ấn giữ nút (cho BTN_3 và BTN_4)
 unsigned long lastBrightnessButtonTime = 0;  // Thời gian nhận nút cuối
@@ -204,6 +204,36 @@ void renderModeFade() {
   }
 }
 
+// ===== HÀM VẼ EDIT VISUAL =====
+void drawEditVisual() {
+  // Tắt tất cả LED
+  fill_solid(leds, MAX_LEDS, CRGB::Black);
+
+  // Hiển thị giá trị đang edit dưới dạng 8-bit
+  uint8_t valueToShow = editingMode ? numLedsStart : numLedsTotal;
+
+  // Hiển thị 8 bit (LEDs 0-7)
+  for (uint8_t bit = 0; bit < 8 && bit < MAX_LEDS; bit++) {
+    if (valueToShow & (1 << bit)) {
+      leds[bit] = CRGB::Cyan;  // Bit = 1: Cyan
+    } else {
+      leds[bit] = CRGB::Black;  // Bit = 0: Tắt
+    }
+  }
+
+  // LED thứ 8: Chỉ báo chế độ edit
+  if (MAX_LEDS > 8) {
+    leds[8] = editingMode ? CRGB::Red : CRGB::Green;  // Đỏ = Edit đầu, Xanh = Edit đuôi
+  }
+
+  // LED thứ 9: Chỉ báo đang ở chế độ edit (luôn trắng)
+  if (MAX_LEDS > 9) {
+    leds[9] = CRGB::White;
+  }
+
+  FastLED.show();
+}
+
 // ===== HÀM VẼ ADJUSTMENT VISUAL =====
 void drawAdjustmentVisual() {
   // Tắt tất cả LED
@@ -225,6 +255,11 @@ void drawAdjustmentVisual() {
         leds[bit] = CRGB::Black;
       }
     }
+  }
+
+  // Thêm indicator cho adjustment mode ở LED 8
+  if (MAX_LEDS > 8) {
+    leds[8] = adjustmentMode ? CRGB::Blue : CRGB::Yellow;  // Xanh = FPS, Vàng = Speed
   }
 
   FastLED.show();
@@ -271,18 +306,6 @@ void updateLEDs() {
       break;
   }
 
-  // Vẽ indicator nếu đang edit
-  if (showEditIndicator) {
-    unsigned long elapsed = millis() - lastEditActivity;
-    // Nhấp nháy mỗi 500ms
-    if ((elapsed / 500) % 2 == 0) {
-      uint16_t indicatorPos = editingMode ? numLedsStart : (numLedsTotal > 0 ? numLedsTotal - 1 : 0);
-      if (indicatorPos < MAX_LEDS) {
-        leds[indicatorPos] = CRGB::White;
-      }
-    }
-  }
-
   FastLED.show();
 }
 
@@ -302,10 +325,11 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
     if (currentTime - lastEditModeChangeTime > modeChangeDebounce) {
       lastEditModeChangeTime = currentTime;
       editingMode = !editingMode;
-      showEditIndicator = true;
+      showEditVisual = true;
       lastEditActivity = currentTime;
       Serial.print(">>> Chế độ edit: ");
       Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
+      drawEditVisual();
       saveSettings();
     }
   }
@@ -490,15 +514,17 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
         if (numLedsStart >= numLedsTotal) {
           numLedsStart = numLedsTotal > 0 ? numLedsTotal - 1 : 0;
         }
-        showEditIndicator = true;
+        showEditVisual = true;
         lastEditActivity = millis();
+        drawEditVisual();
         saveSettings();
       }
     } else if (receivedBtn.button == 1) {
       if (numLedsTotal < MAX_LEDS) {
         numLedsTotal++;
-        showEditIndicator = true;
+        showEditVisual = true;
         lastEditActivity = millis();
+        drawEditVisual();
         saveSettings();
       }
     }
@@ -507,15 +533,17 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
     if (receivedBtn.button == 0) {
       if (numLedsStart < numLedsTotal - 1) {
         numLedsStart++;
-        showEditIndicator = true;
+        showEditVisual = true;
         lastEditActivity = millis();
+        drawEditVisual();
         saveSettings();
       }
     } else if (receivedBtn.button == 1) {
       if (numLedsStart > 0) {
         numLedsStart--;
-        showEditIndicator = true;
+        showEditVisual = true;
         lastEditActivity = millis();
+        drawEditVisual();
         saveSettings();
       }
     }
@@ -577,22 +605,28 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
+  // Kiểm tra timeout cho edit visual (10 giây)
+  if (showEditVisual && (currentMillis - lastEditActivity > 10000)) {
+    showEditVisual = false;
+  }
+
   // Kiểm tra timeout cho adjustment visual (3 giây)
   if (showAdjustmentVisual && (currentMillis - lastAdjustmentTime > 3000)) {
     showAdjustmentVisual = false;
   }
 
-  // Kiểm tra timeout cho edit indicator (5 giây)
-  if (showEditIndicator && (currentMillis - lastEditActivity > 5000)) {
-    showEditIndicator = false;
+  // Ưu tiên 1: Hiển thị edit visual (BTN_0/1/2)
+  if (showEditVisual) {
+    drawEditVisual();
+    delay(50);
   }
-
-  // Nếu đang hiển thị adjustment visual
-  if (showAdjustmentVisual) {
+  // Ưu tiên 2: Hiển thị adjustment visual (BTN_7/8/9)
+  else if (showAdjustmentVisual) {
     drawAdjustmentVisual();
     delay(50);
-  } else {
-    // Cập nhật hiệu ứng LED bình thường
+  }
+  // Ưu tiên 3: Hiển thị hiệu ứng LED bình thường
+  else {
     uint16_t interval = 1000 / fps;
 
     if (currentMillis - lastEffectUpdate > interval) {
