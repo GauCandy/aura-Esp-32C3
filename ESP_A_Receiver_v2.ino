@@ -11,8 +11,8 @@
  * - BTN_1: Giảm số LED tắt từ đầu (dịch điểm bắt đầu sang trái)
  *
  * - BTN_2: Chuyển đổi giữa 2 chế độ
- * - BTN_3: Giảm độ sáng LED (ấn giữ để giảm nhanh)
- * - BTN_4: Tăng độ sáng LED (ấn giữ để tăng nhanh)
+ * - BTN_3: Giảm độ sáng LED (ấn thường: -5, giữ 2s: -10)
+ * - BTN_4: Tăng độ sáng LED (ấn thường: +5, giữ 2s: +10)
  * - Lưu tất cả vào NVS (giữ khi mất điện)
  * - LED GPIO 8: Sáng 100ms mỗi khi nhận tín hiệu
  * - Màu: Blue
@@ -36,6 +36,11 @@ uint16_t numLedsTotal = 50;    // Tổng số LED được điều khiển (0-30
 uint16_t numLedsStart = 0;     // Số LED tắt từ đầu (vị trí bắt đầu)
 bool editingMode = false;      // false = edit đuôi, true = edit đầu
 uint8_t brightness = 50;       // Độ sáng LED (0-255), mặc định 50
+
+// Biến theo dõi ấn giữ nút (cho BTN_3 và BTN_4)
+unsigned long lastBrightnessButtonTime = 0;  // Thời gian nhận nút cuối
+uint8_t brightnessButtonCount = 0;           // Số lần nhấn liên tục
+uint8_t lastBrightnessButton = 255;          // Nút cuối (3 hoặc 4)
 
 // ===== CẤU TRÚC DỮ LIỆU NHẬN =====
 // Nhận từ ESP B (button number: 0-12)
@@ -130,29 +135,75 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
 
   // ===== BTN_3: GIẢM ĐỘ SÁNG =====
   else if (receivedBtn.button == 3) {
-    if (brightness > 10) {
-      brightness -= 10;
+    unsigned long currentTime = millis();
+    uint8_t step = 5; // Mặc định: ấn thường = 5
+
+    // Kiểm tra nếu đang giữ nút (nhận liên tục trong < 300ms)
+    if (lastBrightnessButton == 3 && (currentTime - lastBrightnessButtonTime) < 300) {
+      brightnessButtonCount++;
+      // Nếu giữ >= 2s (khoảng 10 lần với debounce 200ms) → bước nhảy 10
+      if (brightnessButtonCount >= 10) {
+        step = 10;
+      }
+    } else {
+      // Reset nếu nhấn mới hoặc đổi nút
+      brightnessButtonCount = 0;
+    }
+
+    lastBrightnessButton = 3;
+    lastBrightnessButtonTime = currentTime;
+
+    // Giảm độ sáng
+    if (brightness > step) {
+      brightness -= step;
     } else {
       brightness = 0;
     }
+
     FastLED.setBrightness(brightness);
     FastLED.show();
     Serial.print("Độ sáng: ");
-    Serial.println(brightness);
+    Serial.print(brightness);
+    Serial.print(" (");
+    Serial.print(step);
+    Serial.println(")");
     saveSettings();
   }
 
   // ===== BTN_4: TĂNG ĐỘ SÁNG =====
   else if (receivedBtn.button == 4) {
-    if (brightness <= 245) {
-      brightness += 10;
+    unsigned long currentTime = millis();
+    uint8_t step = 5; // Mặc định: ấn thường = 5
+
+    // Kiểm tra nếu đang giữ nút (nhận liên tục trong < 300ms)
+    if (lastBrightnessButton == 4 && (currentTime - lastBrightnessButtonTime) < 300) {
+      brightnessButtonCount++;
+      // Nếu giữ >= 2s (khoảng 10 lần với debounce 200ms) → bước nhảy 10
+      if (brightnessButtonCount >= 10) {
+        step = 10;
+      }
+    } else {
+      // Reset nếu nhấn mới hoặc đổi nút
+      brightnessButtonCount = 0;
+    }
+
+    lastBrightnessButton = 4;
+    lastBrightnessButtonTime = currentTime;
+
+    // Tăng độ sáng
+    if (brightness <= 255 - step) {
+      brightness += step;
     } else {
       brightness = 255;
     }
+
     FastLED.setBrightness(brightness);
     FastLED.show();
     Serial.print("Độ sáng: ");
-    Serial.println(brightness);
+    Serial.print(brightness);
+    Serial.print(" (");
+    Serial.print(step);
+    Serial.println(")");
     saveSettings();
   }
 
@@ -258,8 +309,8 @@ void setup() {
 
   Serial.println("\n=== SẴN SÀNG NHẬN TÍN HIỆU ===");
   Serial.println("BTN_2: Chuyển đổi chế độ");
-  Serial.println("BTN_3: Giảm độ sáng (ấn giữ để giảm nhanh)");
-  Serial.println("BTN_4: Tăng độ sáng (ấn giữ để tăng nhanh)");
+  Serial.println("BTN_3: Giảm độ sáng (ấn: -5, giữ 2s: -10)");
+  Serial.println("BTN_4: Tăng độ sáng (ấn: +5, giữ 2s: +10)");
   Serial.println("\nChế độ EDIT ĐUÔI:");
   Serial.println("  BTN_0: Giảm tổng số LED");
   Serial.println("  BTN_1: Tăng tổng số LED");
