@@ -10,12 +10,13 @@
  * - BTN_0: Tăng số LED tắt từ đầu (dịch điểm bắt đầu sang phải)
  * - BTN_1: Giảm số LED tắt từ đầu (dịch điểm bắt đầu sang trái)
  *
- * - BTN_2: Chuyển đổi giữa 2 chế độ
+ * - BTN_2: Chuyển đổi giữa 2 chế độ edit đầu/đuôi
  * - BTN_3: Giảm độ sáng LED (ấn thường: -5, giữ 2s: -10)
  * - BTN_4: Tăng độ sáng LED (ấn thường: +5, giữ 2s: +10)
+ * - BTN_5: Chế độ LED tiếp theo (vòng tròn)
+ * - BTN_6: Chế độ LED trước đó (vòng tròn)
  * - Lưu tất cả vào NVS (giữ khi mất điện)
  * - LED GPIO 8: Sáng 100ms mỗi khi nhận tín hiệu
- * - Màu: Blue
  */
 
 #include <esp_now.h>
@@ -31,11 +32,41 @@
 CRGB leds[MAX_LEDS];
 Preferences preferences;       // Lưu trữ vào NVS
 
+// ===== ĐỊNH NGHĨA CÁC CHẾ ĐỘ LED =====
+enum LedMode {
+  MODE_SOLID = 0,      // Đơn sắc Blue
+  MODE_RAINBOW,        // Cầu vồng
+  MODE_BREATHING,      // Breathing (hít thở)
+  MODE_CHASE,          // Chạy đuổi
+  MODE_SPARKLE,        // Lấp lánh
+  MODE_FIRE,           // Lửa
+  MODE_THEATER_CHASE,  // Theater chase
+  MODE_FADE,           // Fade in/out
+  MODE_COUNT           // Tổng số mode (LUÔN ĐỂ CUỐI!)
+};
+
+// Tên các chế độ (để hiển thị Serial)
+const char* modeNames[] = {
+  "Solid Blue",
+  "Rainbow",
+  "Breathing",
+  "Chase",
+  "Sparkle",
+  "Fire",
+  "Theater Chase",
+  "Fade"
+};
+
 // ===== BIẾN ĐIỀU KHIỂN =====
 uint16_t numLedsTotal = 50;    // Tổng số LED được điều khiển (0-300)
 uint16_t numLedsStart = 0;     // Số LED tắt từ đầu (vị trí bắt đầu)
 bool editingMode = false;      // false = edit đuôi, true = edit đầu
 uint8_t brightness = 50;       // Độ sáng LED (0-255), mặc định 50
+uint8_t currentMode = MODE_SOLID;  // Chế độ LED hiện tại
+
+// Biến cho hiệu ứng
+unsigned long lastEffectUpdate = 0;
+uint16_t effectStep = 0;
 
 // Biến theo dõi ấn giữ nút (cho BTN_3 và BTN_4)
 unsigned long lastBrightnessButtonTime = 0;  // Thời gian nhận nút cuối
@@ -57,6 +88,7 @@ void saveSettings() {
   preferences.putUShort("numStart", numLedsStart);
   preferences.putBool("editMode", editingMode);
   preferences.putUChar("brightness", brightness);
+  preferences.putUChar("ledMode", currentMode);
   preferences.end();
 
   Serial.println("✓ Đã lưu cài đặt vào NVS:");
@@ -64,10 +96,12 @@ void saveSettings() {
   Serial.println(numLedsTotal);
   Serial.print("  - LED tắt từ đầu: ");
   Serial.println(numLedsStart);
-  Serial.print("  - Chế độ: ");
+  Serial.print("  - Chế độ edit: ");
   Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
   Serial.print("  - Độ sáng: ");
   Serial.println(brightness);
+  Serial.print("  - Chế độ LED: ");
+  Serial.println(modeNames[currentMode]);
 }
 
 void loadSettings() {
@@ -76,6 +110,7 @@ void loadSettings() {
   numLedsStart = preferences.getUShort("numStart", 0);   // Mặc định 0
   editingMode = preferences.getBool("editMode", false);  // Mặc định edit đuôi
   brightness = preferences.getUChar("brightness", 50);   // Mặc định 50
+  currentMode = preferences.getUChar("ledMode", MODE_SOLID);  // Mặc định Solid Blue
   preferences.end();
 
   Serial.println("✓ Đã đọc cài đặt từ NVS:");
@@ -83,36 +118,127 @@ void loadSettings() {
   Serial.println(numLedsTotal);
   Serial.print("  - LED tắt từ đầu: ");
   Serial.println(numLedsStart);
-  Serial.print("  - Chế độ: ");
+  Serial.print("  - Chế độ edit: ");
   Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
   Serial.print("  - Độ sáng: ");
   Serial.println(brightness);
+  Serial.print("  - Chế độ LED: ");
+  Serial.println(modeNames[currentMode]);
 }
 
-// ===== HÀM CẬP NHẬT HIỂN THỊ LED =====
+// ===== CÁC HÀM RENDER CHO TỪNG CHẾ ĐỘ =====
+
+void renderModeSolid() {
+  // Đơn sắc Blue
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    leds[i] = CRGB::Blue;
+  }
+}
+
+void renderModeRainbow() {
+  // Rainbow effect
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    leds[i] = CHSV((effectStep + (i - numLedsStart) * 5) % 256, 255, 255);
+  }
+}
+
+void renderModeBreathing() {
+  // Breathing effect
+  uint8_t breath = beatsin8(20, 50, 255);
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    leds[i] = CRGB(0, 0, breath);  // Blue breathing
+  }
+}
+
+void renderModeChase() {
+  // Chạy đuổi
+  uint16_t activeLeds = numLedsTotal - numLedsStart;
+  if (activeLeds > 0) {
+    uint16_t pos = numLedsStart + (effectStep % activeLeds);
+    if (pos < MAX_LEDS) {
+      leds[pos] = CRGB::Blue;
+      // Fade các LED khác
+      fadeToBlackBy(leds, MAX_LEDS, 20);
+      leds[pos] = CRGB::Blue;
+    }
+  }
+}
+
+void renderModeSparkle() {
+  // Lấp lánh
+  fadeToBlackBy(leds, MAX_LEDS, 50);
+  if (random8() < 80 && numLedsTotal > numLedsStart) {
+    uint16_t activeLeds = numLedsTotal - numLedsStart;
+    uint16_t pos = numLedsStart + random16(activeLeds);
+    if (pos < MAX_LEDS) {
+      leds[pos] = CRGB::Blue;
+    }
+  }
+}
+
+void renderModeFire() {
+  // Hiệu ứng lửa (màu đỏ-vàng)
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    leds[i] = CHSV(random8(0, 30), 255, random8(100, 255));
+  }
+}
+
+void renderModeTheaterChase() {
+  // Theater chase
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    if ((i + effectStep) % 3 == 0) {
+      leds[i] = CRGB::Blue;
+    } else {
+      leds[i] = CRGB::Black;
+    }
+  }
+}
+
+void renderModeFade() {
+  // Fade in/out
+  uint8_t fadeBrightness = beatsin8(15, 0, 255);
+  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
+    leds[i] = CRGB(0, 0, fadeBrightness);
+  }
+}
+
+// ===== HÀM CẬP NHẬT HIỂN THỊ LED THEO CHẾ ĐỘ HIỆN TẠI =====
 void updateLEDs() {
   // Tắt tất cả LED trước
   fill_solid(leds, MAX_LEDS, CRGB::Black);
 
-  // Sáng các LED từ numLedsStart đến (numLedsTotal - 1)
-  for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
-    leds[i] = CRGB::Blue;
+  // Render theo chế độ hiện tại
+  switch (currentMode) {
+    case MODE_SOLID:
+      renderModeSolid();
+      break;
+    case MODE_RAINBOW:
+      renderModeRainbow();
+      break;
+    case MODE_BREATHING:
+      renderModeBreathing();
+      break;
+    case MODE_CHASE:
+      renderModeChase();
+      break;
+    case MODE_SPARKLE:
+      renderModeSparkle();
+      break;
+    case MODE_FIRE:
+      renderModeFire();
+      break;
+    case MODE_THEATER_CHASE:
+      renderModeTheaterChase();
+      break;
+    case MODE_FADE:
+      renderModeFade();
+      break;
+    default:
+      renderModeSolid();
+      break;
   }
 
   FastLED.show();
-
-  // In ra trạng thái hiện tại
-  Serial.print("LED: ");
-  if (numLedsStart < numLedsTotal) {
-    Serial.print(numLedsStart);
-    Serial.print("-");
-    Serial.print(numLedsTotal - 1);
-    Serial.print(" (");
-    Serial.print(numLedsTotal - numLedsStart);
-    Serial.println(" LED sáng)");
-  } else {
-    Serial.println("TẤT CẢ TẮT");
-  }
 }
 
 // ===== CALLBACK KHI NHẬN DỮ LIỆU =====
@@ -204,6 +330,29 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
     Serial.print(" (");
     Serial.print(step);
     Serial.println(")");
+    saveSettings();
+  }
+
+  // ===== BTN_5: CHẾ ĐỘ LED TIẾP THEO =====
+  else if (receivedBtn.button == 5) {
+    currentMode++;
+    if (currentMode >= MODE_COUNT) {
+      currentMode = 0;  // Quay về chế độ đầu tiên
+    }
+    Serial.print(">>> Chế độ LED: ");
+    Serial.println(modeNames[currentMode]);
+    saveSettings();
+  }
+
+  // ===== BTN_6: CHẾ ĐỘ LED TRƯỚC ĐÓ =====
+  else if (receivedBtn.button == 6) {
+    if (currentMode == 0) {
+      currentMode = MODE_COUNT - 1;  // Quay về chế độ cuối cùng
+    } else {
+      currentMode--;
+    }
+    Serial.print(">>> Chế độ LED: ");
+    Serial.println(modeNames[currentMode]);
     saveSettings();
   }
 
@@ -308,9 +457,11 @@ void setup() {
   updateLEDs();
 
   Serial.println("\n=== SẴN SÀNG NHẬN TÍN HIỆU ===");
-  Serial.println("BTN_2: Chuyển đổi chế độ");
+  Serial.println("BTN_2: Chuyển đổi chế độ edit (đầu/đuôi)");
   Serial.println("BTN_3: Giảm độ sáng (ấn: -5, giữ 2s: -10)");
   Serial.println("BTN_4: Tăng độ sáng (ấn: +5, giữ 2s: +10)");
+  Serial.println("BTN_5: Chế độ LED tiếp theo");
+  Serial.println("BTN_6: Chế độ LED trước đó");
   Serial.println("\nChế độ EDIT ĐUÔI:");
   Serial.println("  BTN_0: Giảm tổng số LED");
   Serial.println("  BTN_1: Tăng tổng số LED");
@@ -320,7 +471,15 @@ void setup() {
 }
 
 void loop() {
-  // Không cần làm gì trong loop
-  // Tất cả xử lý được thực hiện trong callback OnDataRecv
+  // Cập nhật hiệu ứng LED theo chế độ hiện tại
+  unsigned long currentMillis = millis();
+
+  // Cập nhật hiệu ứng mỗi 50ms
+  if (currentMillis - lastEffectUpdate > 50) {
+    lastEffectUpdate = currentMillis;
+    effectStep++;
+    updateLEDs();
+  }
+
   delay(10);
 }
