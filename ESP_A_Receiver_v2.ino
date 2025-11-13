@@ -11,9 +11,11 @@
  * - BTN_1: Giảm số LED tắt từ đầu (dịch điểm bắt đầu sang trái)
  *
  * - BTN_2: Chuyển đổi giữa 2 chế độ
+ * - BTN_3: Giảm độ sáng LED (ấn giữ để giảm nhanh)
+ * - BTN_4: Tăng độ sáng LED (ấn giữ để tăng nhanh)
  * - Lưu tất cả vào NVS (giữ khi mất điện)
  * - LED GPIO 8: Sáng 100ms mỗi khi nhận tín hiệu
- * - Màu: Blue với độ sáng 50
+ * - Màu: Blue
  */
 
 #include <esp_now.h>
@@ -33,6 +35,7 @@ Preferences preferences;       // Lưu trữ vào NVS
 uint16_t numLedsTotal = 50;    // Tổng số LED được điều khiển (0-300)
 uint16_t numLedsStart = 0;     // Số LED tắt từ đầu (vị trí bắt đầu)
 bool editingMode = false;      // false = edit đuôi, true = edit đầu
+uint8_t brightness = 50;       // Độ sáng LED (0-255), mặc định 50
 
 // ===== CẤU TRÚC DỮ LIỆU NHẬN =====
 // Nhận từ ESP B (button number: 0-12)
@@ -48,6 +51,7 @@ void saveSettings() {
   preferences.putUShort("numTotal", numLedsTotal);
   preferences.putUShort("numStart", numLedsStart);
   preferences.putBool("editMode", editingMode);
+  preferences.putUChar("brightness", brightness);
   preferences.end();
 
   Serial.println("✓ Đã lưu cài đặt vào NVS:");
@@ -57,6 +61,8 @@ void saveSettings() {
   Serial.println(numLedsStart);
   Serial.print("  - Chế độ: ");
   Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
+  Serial.print("  - Độ sáng: ");
+  Serial.println(brightness);
 }
 
 void loadSettings() {
@@ -64,6 +70,7 @@ void loadSettings() {
   numLedsTotal = preferences.getUShort("numTotal", 50);  // Mặc định 50
   numLedsStart = preferences.getUShort("numStart", 0);   // Mặc định 0
   editingMode = preferences.getBool("editMode", false);  // Mặc định edit đuôi
+  brightness = preferences.getUChar("brightness", 50);   // Mặc định 50
   preferences.end();
 
   Serial.println("✓ Đã đọc cài đặt từ NVS:");
@@ -73,6 +80,8 @@ void loadSettings() {
   Serial.println(numLedsStart);
   Serial.print("  - Chế độ: ");
   Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
+  Serial.print("  - Độ sáng: ");
+  Serial.println(brightness);
 }
 
 // ===== HÀM CẬP NHẬT HIỂN THỊ LED =====
@@ -116,6 +125,34 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
     editingMode = !editingMode;
     Serial.print(">>> Chuyển sang chế độ: ");
     Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
+    saveSettings();
+  }
+
+  // ===== BTN_3: GIẢM ĐỘ SÁNG =====
+  else if (receivedBtn.button == 3) {
+    if (brightness > 10) {
+      brightness -= 10;
+    } else {
+      brightness = 0;
+    }
+    FastLED.setBrightness(brightness);
+    FastLED.show();
+    Serial.print("Độ sáng: ");
+    Serial.println(brightness);
+    saveSettings();
+  }
+
+  // ===== BTN_4: TĂNG ĐỘ SÁNG =====
+  else if (receivedBtn.button == 4) {
+    if (brightness <= 245) {
+      brightness += 10;
+    } else {
+      brightness = 255;
+    }
+    FastLED.setBrightness(brightness);
+    FastLED.show();
+    Serial.print("Độ sáng: ");
+    Serial.println(brightness);
     saveSettings();
   }
 
@@ -206,17 +243,23 @@ void setup() {
 
   // Khởi tạo FastLED
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, MAX_LEDS);
-  FastLED.setBrightness(50); // Độ sáng 50
-  Serial.println("✓ FastLED đã khởi tạo (Độ sáng: 50)");
 
   // Đọc cài đặt từ bộ nhớ
   loadSettings();
+
+  // Áp dụng độ sáng đã lưu
+  FastLED.setBrightness(brightness);
+  Serial.print("✓ FastLED đã khởi tạo (Độ sáng: ");
+  Serial.print(brightness);
+  Serial.println(")");
 
   // Hiển thị LED ban đầu
   updateLEDs();
 
   Serial.println("\n=== SẴN SÀNG NHẬN TÍN HIỆU ===");
   Serial.println("BTN_2: Chuyển đổi chế độ");
+  Serial.println("BTN_3: Giảm độ sáng (ấn giữ để giảm nhanh)");
+  Serial.println("BTN_4: Tăng độ sáng (ấn giữ để tăng nhanh)");
   Serial.println("\nChế độ EDIT ĐUÔI:");
   Serial.println("  BTN_0: Giảm tổng số LED");
   Serial.println("  BTN_1: Tăng tổng số LED");
