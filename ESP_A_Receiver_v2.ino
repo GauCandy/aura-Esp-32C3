@@ -73,6 +73,10 @@ unsigned long lastBrightnessButtonTime = 0;  // Thời gian nhận nút cuối
 uint8_t brightnessButtonCount = 0;           // Số lần nhấn liên tục
 uint8_t lastBrightnessButton = 255;          // Nút cuối (3 hoặc 4)
 
+// Biến debounce cho nút chuyển mode (BTN_5 và BTN_6)
+unsigned long lastModeChangeTime = 0;        // Thời gian chuyển mode cuối
+const unsigned long modeChangeDebounce = 500; // Debounce 500ms
+
 // ===== CẤU TRÚC DỮ LIỆU NHẬN =====
 // Nhận từ ESP B (button number: 0-12)
 typedef struct button_message {
@@ -335,25 +339,37 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
 
   // ===== BTN_5: CHẾ ĐỘ LED TIẾP THEO =====
   else if (receivedBtn.button == 5) {
-    currentMode++;
-    if (currentMode >= MODE_COUNT) {
-      currentMode = 0;  // Quay về chế độ đầu tiên
+    unsigned long currentTime = millis();
+    // Chỉ chuyển mode nếu đã qua thời gian debounce
+    if (currentTime - lastModeChangeTime > modeChangeDebounce) {
+      lastModeChangeTime = currentTime;
+
+      currentMode++;
+      if (currentMode >= MODE_COUNT) {
+        currentMode = 0;  // Quay về chế độ đầu tiên
+      }
+      Serial.print(">>> Chế độ LED: ");
+      Serial.println(modeNames[currentMode]);
+      saveSettings();
     }
-    Serial.print(">>> Chế độ LED: ");
-    Serial.println(modeNames[currentMode]);
-    saveSettings();
   }
 
   // ===== BTN_6: CHẾ ĐỘ LED TRƯỚC ĐÓ =====
   else if (receivedBtn.button == 6) {
-    if (currentMode == 0) {
-      currentMode = MODE_COUNT - 1;  // Quay về chế độ cuối cùng
-    } else {
-      currentMode--;
+    unsigned long currentTime = millis();
+    // Chỉ chuyển mode nếu đã qua thời gian debounce
+    if (currentTime - lastModeChangeTime > modeChangeDebounce) {
+      lastModeChangeTime = currentTime;
+
+      if (currentMode == 0) {
+        currentMode = MODE_COUNT - 1;  // Quay về chế độ cuối cùng
+      } else {
+        currentMode--;
+      }
+      Serial.print(">>> Chế độ LED: ");
+      Serial.println(modeNames[currentMode]);
+      saveSettings();
     }
-    Serial.print(">>> Chế độ LED: ");
-    Serial.println(modeNames[currentMode]);
-    saveSettings();
   }
 
   // ===== CHẾ ĐỘ EDIT ĐUÔI (mặc định) =====
