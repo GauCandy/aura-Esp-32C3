@@ -10,7 +10,7 @@
  * - BTN_0: Tăng số LED tắt từ đầu (dịch điểm bắt đầu sang phải)
  * - BTN_1: Giảm số LED tắt từ đầu (dịch điểm bắt đầu sang trái)
  *
- * - BTN_2: Chuyển đổi giữa 2 chế độ
+ * - BTN_3: Chuyển đổi giữa 2 chế độ
  * - Lưu tất cả vào NVS (giữ khi mất điện)
  * - LED GPIO 8: Sáng 100ms mỗi khi nhận tín hiệu
  * - Màu: Blue với độ sáng 50
@@ -111,8 +111,8 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
   Serial.print("\n[Nhận tín hiệu] Nút: ");
   Serial.println(receivedBtn.button);
 
-  // ===== BTN_2: CHUYỂN ĐỔI CHẾ ĐỘ =====
-  if (receivedBtn.button == 2) {
+  // ===== BTN_3: CHUYỂN ĐỔI CHẾ ĐỘ =====
+  if (receivedBtn.button == 3) {
     editingMode = !editingMode;
     Serial.print(">>> Chuyển sang chế độ: ");
     Serial.println(editingMode ? "EDIT ĐẦU" : "EDIT ĐUÔI");
@@ -216,7 +216,7 @@ void setup() {
   updateLEDs();
 
   Serial.println("\n=== SẴN SÀNG NHẬN TÍN HIỆU ===");
-  Serial.println("BTN_2: Chuyển đổi chế độ");
+  Serial.println("BTN_3: Chuyển đổi chế độ");
   Serial.println("\nChế độ EDIT ĐUÔI:");
   Serial.println("  BTN_0: Giảm tổng số LED");
   Serial.println("  BTN_1: Tăng tổng số LED");
