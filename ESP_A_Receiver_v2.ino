@@ -15,6 +15,10 @@
  * - BTN_4: Tăng độ sáng LED (ấn thường: +5, giữ 2s: +10)
  * - BTN_5: Chế độ LED tiếp theo (vòng tròn)
  * - BTN_6: Chế độ LED trước đó (vòng tròn)
+ * - BTN_7: Giảm tốc độ hiệu ứng (0-100, mặc định 50)
+ * - BTN_8: Tăng tốc độ hiệu ứng (0-100, mặc định 50)
+ * - BTN_9: Giảm FPS (10-60, mặc định 30) - Giảm FPS = Mượt hơn nhưng chậm
+ * - BTN_10: Tăng FPS (10-60, mặc định 30) - Tăng FPS = Nhanh hơn
  * - Lưu tất cả vào NVS (giữ khi mất điện)
  * - LED GPIO 8: Sáng 100ms mỗi khi nhận tín hiệu
  */
@@ -67,6 +71,8 @@ uint8_t currentMode = MODE_SOLID;  // Chế độ LED hiện tại
 // Biến cho hiệu ứng
 unsigned long lastEffectUpdate = 0;
 uint16_t effectStep = 0;
+uint8_t effectSpeed = 50;      // Tốc độ hiệu ứng (0-100), mặc định 50
+uint8_t fps = 30;              // FPS (10-60), mặc định 30
 
 // Biến theo dõi ấn giữ nút (cho BTN_3 và BTN_4)
 unsigned long lastBrightnessButtonTime = 0;  // Thời gian nhận nút cuối
@@ -93,6 +99,8 @@ void saveSettings() {
   preferences.putBool("editMode", editingMode);
   preferences.putUChar("brightness", brightness);
   preferences.putUChar("ledMode", currentMode);
+  preferences.putUChar("speed", effectSpeed);
+  preferences.putUChar("fps", fps);
   preferences.end();
 
   Serial.println("✓ Đã lưu cài đặt vào NVS:");
@@ -106,6 +114,10 @@ void saveSettings() {
   Serial.println(brightness);
   Serial.print("  - Chế độ LED: ");
   Serial.println(modeNames[currentMode]);
+  Serial.print("  - Tốc độ: ");
+  Serial.println(effectSpeed);
+  Serial.print("  - FPS: ");
+  Serial.println(fps);
 }
 
 void loadSettings() {
@@ -115,6 +127,8 @@ void loadSettings() {
   editingMode = preferences.getBool("editMode", false);  // Mặc định edit đuôi
   brightness = preferences.getUChar("brightness", 50);   // Mặc định 50
   currentMode = preferences.getUChar("ledMode", MODE_SOLID);  // Mặc định Solid Blue
+  effectSpeed = preferences.getUChar("speed", 50);       // Mặc định 50
+  fps = preferences.getUChar("fps", 30);                 // Mặc định 30
   preferences.end();
 
   Serial.println("✓ Đã đọc cài đặt từ NVS:");
@@ -128,6 +142,10 @@ void loadSettings() {
   Serial.println(brightness);
   Serial.print("  - Chế độ LED: ");
   Serial.println(modeNames[currentMode]);
+  Serial.print("  - Tốc độ: ");
+  Serial.println(effectSpeed);
+  Serial.print("  - FPS: ");
+  Serial.println(fps);
 }
 
 // ===== CÁC HÀM RENDER CHO TỪNG CHẾ ĐỘ =====
@@ -147,8 +165,9 @@ void renderModeRainbow() {
 }
 
 void renderModeBreathing() {
-  // Breathing effect
-  uint8_t breath = beatsin8(20, 50, 255);
+  // Breathing effect - Tốc độ điều chỉnh bởi effectSpeed
+  uint8_t speed = map(effectSpeed, 0, 100, 5, 50);
+  uint8_t breath = beatsin8(speed, 50, 255);
   for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
     leds[i] = CRGB(0, 0, breath);  // Blue breathing
   }
@@ -199,8 +218,9 @@ void renderModeTheaterChase() {
 }
 
 void renderModeFade() {
-  // Fade in/out
-  uint8_t fadeBrightness = beatsin8(15, 0, 255);
+  // Fade in/out - Tốc độ điều chỉnh bởi effectSpeed
+  uint8_t speed = map(effectSpeed, 0, 100, 5, 40);
+  uint8_t fadeBrightness = beatsin8(speed, 0, 255);
   for (uint16_t i = numLedsStart; i < numLedsTotal && i < MAX_LEDS; i++) {
     leds[i] = CRGB(0, 0, fadeBrightness);
   }
@@ -208,8 +228,15 @@ void renderModeFade() {
 
 // ===== HÀM CẬP NHẬT HIỂN THỊ LED THEO CHẾ ĐỘ HIỆN TẠI =====
 void updateLEDs() {
-  // Tắt tất cả LED trước
-  fill_solid(leds, MAX_LEDS, CRGB::Black);
+  // Chỉ tắt LED ngoài vùng active
+  // Tắt LED từ 0 đến numLedsStart-1
+  for (uint16_t i = 0; i < numLedsStart && i < MAX_LEDS; i++) {
+    leds[i] = CRGB::Black;
+  }
+  // Tắt LED từ numLedsTotal đến MAX_LEDS-1
+  for (uint16_t i = numLedsTotal; i < MAX_LEDS; i++) {
+    leds[i] = CRGB::Black;
+  }
 
   // Render theo chế độ hiện tại
   switch (currentMode) {
@@ -372,6 +399,52 @@ void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int 
     }
   }
 
+  // ===== BTN_7: GIẢM TỐC ĐỘ HIỆU ỨNG =====
+  else if (receivedBtn.button == 7) {
+    if (effectSpeed > 5) {
+      effectSpeed -= 5;
+    } else {
+      effectSpeed = 0;
+    }
+    Serial.print(">>> Tốc độ: ");
+    Serial.println(effectSpeed);
+    saveSettings();
+  }
+
+  // ===== BTN_8: TĂNG TỐC ĐỘ HIỆU ỨNG =====
+  else if (receivedBtn.button == 8) {
+    if (effectSpeed <= 95) {
+      effectSpeed += 5;
+    } else {
+      effectSpeed = 100;
+    }
+    Serial.print(">>> Tốc độ: ");
+    Serial.println(effectSpeed);
+    saveSettings();
+  }
+
+  // ===== BTN_9: GIẢM FPS =====
+  else if (receivedBtn.button == 9) {
+    if (fps > 10) {
+      fps -= 5;
+      if (fps < 10) fps = 10;
+    }
+    Serial.print(">>> FPS: ");
+    Serial.println(fps);
+    saveSettings();
+  }
+
+  // ===== BTN_10: TĂNG FPS =====
+  else if (receivedBtn.button == 10) {
+    if (fps < 60) {
+      fps += 5;
+      if (fps > 60) fps = 60;
+    }
+    Serial.print(">>> FPS: ");
+    Serial.println(fps);
+    saveSettings();
+  }
+
   // ===== CHẾ ĐỘ EDIT ĐUÔI (mặc định) =====
   else if (!editingMode) {
     if (receivedBtn.button == 0) {
@@ -478,6 +551,10 @@ void setup() {
   Serial.println("BTN_4: Tăng độ sáng (ấn: +5, giữ 2s: +10)");
   Serial.println("BTN_5: Chế độ LED tiếp theo");
   Serial.println("BTN_6: Chế độ LED trước đó");
+  Serial.println("BTN_7: Giảm tốc độ hiệu ứng");
+  Serial.println("BTN_8: Tăng tốc độ hiệu ứng");
+  Serial.println("BTN_9: Giảm FPS (mượt hơn)");
+  Serial.println("BTN_10: Tăng FPS (nhanh hơn)");
   Serial.println("\nChế độ EDIT ĐUÔI:");
   Serial.println("  BTN_0: Giảm tổng số LED");
   Serial.println("  BTN_1: Tăng tổng số LED");
@@ -490,12 +567,15 @@ void loop() {
   // Cập nhật hiệu ứng LED theo chế độ hiện tại
   unsigned long currentMillis = millis();
 
-  // Cập nhật hiệu ứng mỗi 50ms
-  if (currentMillis - lastEffectUpdate > 50) {
+  // Tính interval từ FPS: interval (ms) = 1000 / fps
+  uint16_t interval = 1000 / fps;
+
+  // Cập nhật hiệu ứng theo FPS
+  if (currentMillis - lastEffectUpdate > interval) {
     lastEffectUpdate = currentMillis;
     effectStep++;
     updateLEDs();
   }
 
-  delay(10);
+  delay(5);  // Delay nhỏ để không chiếm CPU
 }
